@@ -1,3 +1,12 @@
 __pycache__/
+sim/*.hex
+sim/params.vh
 sim/tb.vvp
 sim/*.vcd
+sim/xsim.dir/
+sim/*.jou
+sim/*.log
+sim/*.pb
+sim/*.wdb
+vivado/out/
+.Xil/

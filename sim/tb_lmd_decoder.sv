@@ -1,8 +1,9 @@
 // ============================================================================
-// tb_lmd_decoder.v - self-checking testbench for lmd_decoder
+// tb_lmd_decoder.sv - self-checking testbench for lmd_decoder
 //
 // Vectors come from gen_vectors.py (run it first). Run from this directory:
-//   iverilog -g2005 -o tb.vvp ../rtl/lmd_decoder.v tb_lmd_decoder.v && vvp tb.vvp
+//   iverilog -g2012 -o tb.vvp ../rtl/lmd_decoder.sv tb_lmd_decoder.sv && vvp tb.vvp
+// or with Vivado xsim: ./run_xsim.sh
 // ============================================================================
 `timescale 1ns/1ps
 `default_nettype none
@@ -10,28 +11,28 @@
 
 module tb_lmd_decoder;
 
-    reg clk = 1'b0;
+    logic clk = 1'b0;
     always #3.2 clk = ~clk;               // 156.25 MHz, 10GbE 64-bit datapath
-    reg rst = 1'b1;
+    logic rst = 1'b1;
 
-    reg [67:0]  stim      [0:`N_BEATS-1];  // {pad, valid, tuser, tlast, tdata}
-    reg [367:0] exp_msg   [0:`N_MSGS-1];
-    reg [3:0]   exp_frame [0:`N_FRAMES-1];
-    reg [127:0] exp_gap   [0:`N_GAPS-1];
+    logic [67:0]  stim      [0:`N_BEATS-1];  // {pad, valid, tuser, tlast, tdata}
+    logic [367:0] exp_msg   [0:`N_MSGS-1];
+    logic [3:0]   exp_frame [0:`N_FRAMES-1];
+    logic [127:0] exp_gap   [0:`N_GAPS-1];
 
-    reg  [63:0] tdata  = 64'd0;
-    reg         tvalid = 1'b0;
-    reg         tlast  = 1'b0;
-    reg         tuser  = 1'b0;
-    wire        tready;
+    logic  [63:0] tdata  = 64'd0;
+    logic         tvalid = 1'b0;
+    logic         tlast  = 1'b0;
+    logic         tuser  = 1'b0;
+    logic        tready;
 
-    wire        msg_valid, frame_done, frame_ok, gap_valid, synced;
-    wire [63:0] msg_seq, msg_order_id, msg_price, gap_start, gap_count, expected_seq;
-    wire [7:0]  msg_type, msg_side;
-    wire [15:0] msg_instrument;
-    wire [31:0] msg_flags, msg_qty, msg_ts_delta;
-    wire [47:0] msg_frame_ts;
-    wire [31:0] stat_frames, stat_dup_frames, stat_gaps, stat_bad_frames;
+    logic        msg_valid, frame_done, frame_ok, gap_valid, synced;
+    logic [63:0] msg_seq, msg_order_id, msg_price, gap_start, gap_count, expected_seq;
+    logic [7:0]  msg_type, msg_side;
+    logic [15:0] msg_instrument;
+    logic [31:0] msg_flags, msg_qty, msg_ts_delta;
+    logic [47:0] msg_frame_ts;
+    logic [31:0] stat_frames, stat_dup_frames, stat_gaps, stat_bad_frames;
 
     lmd_decoder #(.CHANNEL_ID(16'h0001)) dut (
         .clk(clk), .rst(rst),
@@ -48,12 +49,13 @@ module tb_lmd_decoder;
         .stat_gaps(stat_gaps), .stat_bad_frames(stat_bad_frames)
     );
 
-    wire [367:0] got_msg = {msg_seq, msg_type, msg_side, msg_instrument, msg_flags,
+    logic [367:0] got_msg;
+    assign got_msg = {msg_seq, msg_type, msg_side, msg_instrument, msg_flags,
                             msg_order_id, msg_price, msg_qty, msg_ts_delta, msg_frame_ts};
 
-    integer i;
-    integer n_msg = 0, n_frame = 0, n_gap = 0, errors = 0;
-    integer cycle = 0, sof_cycle = -1, first_msg_latency = -1;
+    int i;
+    int n_msg = 0, n_frame = 0, n_gap = 0, errors = 0;
+    int cycle = 0, sof_cycle = -1, first_msg_latency = -1;
 
     always @(posedge clk) cycle <= cycle + 1;
 

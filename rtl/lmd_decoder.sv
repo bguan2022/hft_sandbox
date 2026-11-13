@@ -1,5 +1,5 @@
 // ============================================================================
-// lmd_decoder.v - LMD v1 market data decoder (one channel)
+// lmd_decoder.sv - LMD v1 market data decoder (one channel)
 //
 // Input : 64-bit AXI4-Stream from a 10G MAC RX (FCS already stripped),
 //         byte 0 of the frame in tdata[7:0]. tuser=1 on the tlast beat marks
@@ -30,121 +30,120 @@
 `default_nettype none
 
 module lmd_decoder #(
-    parameter [15:0] ETHERTYPE  = 16'h88B5,
-    parameter [7:0]  VERSION    = 8'h01,
-    parameter [15:0] CHANNEL_ID = 16'h0001
+    parameter logic [15:0] ETHERTYPE  = 16'h88B5,
+    parameter logic [7:0]  VERSION    = 8'h01,
+    parameter logic [15:0] CHANNEL_ID = 16'h0001
 )(
-    input  wire        clk,
-    input  wire        rst,
+    input  logic        clk,
+    input  logic        rst,
 
     // AXI4-Stream from MAC RX
-    input  wire [63:0] s_axis_tdata,
-    input  wire [7:0]  s_axis_tkeep,   // unused: LMD frames are 8-byte aligned
-    input  wire        s_axis_tvalid,
-    output wire        s_axis_tready,
-    input  wire        s_axis_tlast,
-    input  wire        s_axis_tuser,
+    input  logic [63:0] s_axis_tdata,
+    input  logic [7:0]  s_axis_tkeep,   // unused: LMD frames are 8-byte aligned
+    input  logic        s_axis_tvalid,
+    output logic        s_axis_tready,
+    input  logic        s_axis_tlast,
+    input  logic        s_axis_tuser,
 
     // Decoded messages
-    output reg         msg_valid,
-    output reg  [63:0] msg_seq,
-    output reg  [7:0]  msg_type,
-    output reg  [7:0]  msg_side,
-    output reg  [15:0] msg_instrument,
-    output reg  [31:0] msg_flags,
-    output reg  [63:0] msg_order_id,
-    output reg  [63:0] msg_price,
-    output reg  [31:0] msg_qty,
-    output reg  [31:0] msg_ts_delta,
-    output reg  [47:0] msg_frame_ts,
+    output logic        msg_valid,
+    output logic [63:0] msg_seq,
+    output logic [7:0]  msg_type,
+    output logic [7:0]  msg_side,
+    output logic [15:0] msg_instrument,
+    output logic [31:0] msg_flags,
+    output logic [63:0] msg_order_id,
+    output logic [63:0] msg_price,
+    output logic [31:0] msg_qty,
+    output logic [31:0] msg_ts_delta,
+    output logic [47:0] msg_frame_ts,
 
     // End of an accepted frame (frame_ok=0: discard this frame's messages)
-    output reg         frame_done,
-    output reg         frame_ok,
+    output logic        frame_done,
+    output logic        frame_ok,
 
     // Sequence gap detected (request recovery for [gap_start, gap_start+gap_count))
-    output reg         gap_valid,
-    output reg  [63:0] gap_start,
-    output reg  [63:0] gap_count,
+    output logic        gap_valid,
+    output logic [63:0] gap_start,
+    output logic [63:0] gap_count,
 
     // Status
-    output reg  [63:0] expected_seq,
-    output reg         synced,
-    output reg  [31:0] stat_frames,
-    output reg  [31:0] stat_dup_frames,
-    output reg  [31:0] stat_gaps,
-    output reg  [31:0] stat_bad_frames
+    output logic [63:0] expected_seq,
+    output logic        synced,
+    output logic [31:0] stat_frames,
+    output logic [31:0] stat_dup_frames,
+    output logic [31:0] stat_gaps,
+    output logic [31:0] stat_bad_frames
 );
 
     // Fully pipelined: never back-pressures the MAC.
     assign s_axis_tready = 1'b1;
 
     // Byte lanes of the current beat
-    wire [7:0] b0 = s_axis_tdata[ 7: 0];
-    wire [7:0] b1 = s_axis_tdata[15: 8];
-    wire [7:0] b2 = s_axis_tdata[23:16];
-    wire [7:0] b3 = s_axis_tdata[31:24];
-    wire [7:0] b4 = s_axis_tdata[39:32];
-    wire [7:0] b5 = s_axis_tdata[47:40];
-    wire [7:0] b6 = s_axis_tdata[55:48];
-    wire [7:0] b7 = s_axis_tdata[63:56];
+    logic [7:0] b0, b1, b2, b3, b4, b5, b6, b7;
+    assign {b7, b6, b5, b4, b3, b2, b1, b0} = s_axis_tdata;
 
-    wire beat_en = s_axis_tvalid;
+    logic beat_en;
+    assign beat_en = s_axis_tvalid;
 
     // Frame state
-    reg  [10:0] beat;          // index of the current beat within the frame
-    reg         hdr_match;     // EtherType and version matched
-    reg  [7:0]  count;         // msg_count
-    reg  [15:0] channel;
-    reg  [47:0] seq_hi;        // seq[63:16]
-    reg  [47:0] frame_ts;
-    reg         accept;        // frame passed sequencing, messages are decoded
-    reg  [7:0]  skip;          // leading messages already delivered
-    reg  [63:0] frame_seq;
-    reg  [63:0] frame_end;     // frame_seq + count
-    reg  [1:0]  mbeat;         // beat within the current message
-    reg  [7:0]  midx;          // message index within the frame
+    logic [10:0] beat;          // index of the current beat within the frame
+    logic        hdr_match;     // EtherType and version matched
+    logic [7:0]  count;         // msg_count
+    logic [15:0] channel;
+    logic [47:0] seq_hi;        // seq[63:16]
+    logic [47:0] frame_ts;
+    logic        accept;        // frame passed sequencing, messages are decoded
+    logic [7:0]  skip;          // leading messages already delivered
+    logic [63:0] frame_seq;
+    logic [63:0] frame_end;     // frame_seq + count
+    logic [1:0]  mbeat;         // beat within the current message
+    logic [7:0]  midx;          // message index within the frame
 
     // Message fields collected over beats 0..2 of each message
-    reg  [7:0]  r_type, r_side;
-    reg  [15:0] r_instr;
-    reg  [31:0] r_flags;
-    reg  [63:0] r_oid, r_price;
+    logic [7:0]  r_type, r_side;
+    logic [15:0] r_instr;
+    logic [31:0] r_flags;
+    logic [63:0] r_oid, r_price;
 
     // Sequencing decision, evaluated on beat 3
-    wire [63:0] seq_w       = {seq_hi, b0, b1};
-    wire [63:0] end_w       = seq_w + {56'd0, count};
-    wire        hdr_ok      = hdr_match && (channel == CHANNEL_ID);
-    wire        is_gap      = synced && (seq_w > expected_seq);
-    wire        is_dup      = synced && (end_w <= expected_seq) && (count != 8'd0);
-    wire [63:0] overlap     = expected_seq - seq_w;     // used only when seq_w <= expected < end_w
+    logic [63:0] seq_w, end_w, overlap;
+    logic        hdr_ok, is_gap, is_dup;
+    logic [10:0] last_needed;   // a complete frame's last beat index is >= 3 + 4*count
 
-    // A complete frame's last beat index is at least 3 + 4*count
-    wire [10:0] last_needed = 11'd3 + {1'b0, count, 2'b00};
+    always_comb begin
+        seq_w       = {seq_hi, b0, b1};
+        end_w       = seq_w + {56'd0, count};
+        hdr_ok      = hdr_match && (channel == CHANNEL_ID);
+        is_gap      = synced && (seq_w > expected_seq);
+        is_dup      = synced && (end_w <= expected_seq) && (count != 8'd0);
+        overlap     = expected_seq - seq_w;          // used only when seq_w <= expected < end_w
+        last_needed = 11'd3 + {1'b0, count, 2'b00};
+    end
 
-    always @(posedge clk) begin
+    always_ff @(posedge clk) begin
         msg_valid  <= 1'b0;
         frame_done <= 1'b0;
         gap_valid  <= 1'b0;
 
         if (rst) begin
-            beat            <= 11'd0;
+            beat            <= '0;
             hdr_match       <= 1'b0;
             accept          <= 1'b0;
-            mbeat           <= 2'd0;
-            midx            <= 8'd0;
-            skip            <= 8'd0;
+            mbeat           <= '0;
+            midx            <= '0;
+            skip            <= '0;
             synced          <= 1'b0;
-            expected_seq    <= 64'd0;
+            expected_seq    <= '0;
             frame_ok        <= 1'b0;
-            stat_frames     <= 32'd0;
-            stat_dup_frames <= 32'd0;
-            stat_gaps       <= 32'd0;
-            stat_bad_frames <= 32'd0;
+            stat_frames     <= '0;
+            stat_dup_frames <= '0;
+            stat_gaps       <= '0;
+            stat_bad_frames <= '0;
         end else if (beat_en) begin
             // ---- beat counter (saturating; resets after tlast)
             if (s_axis_tlast)
-                beat <= 11'd0;
+                beat <= '0;
             else if (beat != 11'h7FF)
                 beat <= beat + 11'd1;
 
@@ -165,9 +164,9 @@ module lmd_decoder #(
                     frame_ts  <= {b2, b3, b4, b5, b6, b7};
                     frame_seq <= seq_w;
                     frame_end <= end_w;
-                    mbeat     <= 2'd0;
-                    midx      <= 8'd0;
-                    skip      <= 8'd0;
+                    mbeat     <= '0;
+                    midx      <= '0;
+                    skip      <= '0;
                     if (!hdr_ok || s_axis_tlast) begin
                         accept <= 1'b0;                       // not ours / runt
                     end else if (!synced || is_gap) begin

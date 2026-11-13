@@ -75,12 +75,15 @@ Gap recovery (a TCP retransmission server or a snapshot channel) is out of scope
 
 | File | Purpose |
 |---|---|
-| `rtl/lmd_decoder.v` | Header parse, sequencing, dedup, gap detection, message decode |
-| `rtl/lmd_ab_mux.v` | Merges A and B feeds at frame granularity, zero added latency for the first arrival |
-| `rtl/lmd_rx_top.v` | Mux + decoder for one channel |
+| `rtl/lmd_decoder.sv` | Header parse, sequencing, dedup, gap detection, message decode |
+| `rtl/lmd_ab_mux.sv` | Merges A and B feeds at frame granularity, zero added latency for the first arrival |
+| `rtl/lmd_rx_top.sv` | Mux + decoder for one channel |
+| `constraints/lmd_ooc.xdc` | 156.25 MHz clock and port timing for out-of-context builds |
+| `vivado/build.tcl` | Synthesis and place & route for the VCU118 |
 | `sw/lmd.py` | Reference encoder, parser, sequencer and a raw-socket sender for testing |
 | `sim/gen_vectors.py` | Builds test scenarios and a register-level model of the decoder |
-| `sim/tb_lmd_decoder.v` | Self-checking testbench |
+| `sim/tb_lmd_decoder.sv` | Self-checking testbench |
+| `sim/run_xsim.sh` | Runs the testbench in Vivado's simulator |
 
 **Interface.** 64-bit AXI4-Stream at 156.25 MHz (10GbE), frame byte 0 in `tdata[7:0]`, `tuser = 1` on the last beat for a bad FCS. This matches common MAC cores (e.g. AMD/Xilinx 10G/25G Ethernet subsystem, Alex Forencich's open-source `verilog-ethernet`). The decoder never back-pressures (`tready = 1`).
 
@@ -88,16 +91,42 @@ Gap recovery (a TCP retransmission server or a snapshot channel) is out of scope
 
 **Cut-through trade-off.** Messages are emitted before the FCS is checked, which saves a full frame of latency. The consumer must be able to undo a frame when `frame_ok = 0`, for example by staging updates until `frame_done` or by keeping a shadow book. Bad FCS on a short, clean link is very rare, and the other feed's copy fills it in.
 
-**Resources.** Roughly 1,000–1,500 flip-flops and a few 64-bit adders/comparators per channel. It needs no block RAM and should close timing easily at 156.25 MHz on any modern FPGA. This is an estimate; it has not been synthesized.
+**Resources.** Roughly 1,000–1,500 flip-flops and a few 64-bit adders/comparators per channel, with no block RAM. That is well under 1% of the VCU118's XCVU9P, and it should close timing comfortably at 156.25 MHz. These are estimates until `make impl` has been run.
+
+## Building for the VCU118
+
+The RTL is SystemVerilog and targets the AMD/Xilinx VCU118 board, whose FPGA is a Virtex UltraScale+ XCVU9P (Vivado part `xcvu9p-flga2104-2L-e`).
+
+```
+make synth      # synthesis only
+make impl       # synthesis + place & route
+```
+
+Both run Vivado in batch mode, out-of-context: the decoder is built on its own with a 156.25 MHz clock and no pin assignments. That is the standard way to size and time a block before integrating it. Checkpoints and utilization/timing reports go to `vivado/out/`, and the log prints the worst setup slack (negative means timing failed). For a 25G MAC with a 64-bit datapath, change the clock in `constraints/lmd_ooc.xdc` to `-period 2.560` (390.625 MHz).
+
+**Board integration (next step).** On the VCU118 the feeds arrive on the two QSFP28 cages, which connect to GTY transceivers. A full design adds, per feed:
+
+- an Ethernet MAC + PCS/PMA in 10GBASE-R mode with a 64-bit AXI4-Stream interface. Options are the AMD 10G/25G Ethernet Subsystem IP (`xxv_ethernet`), or Alex Forencich's open-source `verilog-ethernet`, which includes VCU118 example designs;
+- a small cut-through AXIS FIFO between the MAC and `lmd_ab_mux` (see the note in that file);
+- a board-level XDC with the QSFP transceiver locations and reference clocks from the VCU118 board files or user guide (UG1224).
+
+Feed A goes on QSFP1 and feed B on QSFP2, and `lmd_rx_top` runs on the MAC's RX clock.
 
 ## Running the testbench
 
-Requires Python 3 and Icarus Verilog (`apt install iverilog`):
+With Icarus Verilog 11 or newer (`apt install iverilog`):
 
 ```
 make sim        # generates vectors, runs the testbench, prints PASS/FAIL
-make lint       # optional, needs Verilator
 ```
+
+With Vivado's simulator (after sourcing Vivado's `settings64.sh`):
+
+```
+make xsim
+```
+
+`make lint` runs Verilator lint, if installed.
 
 The scenario covers sync, an A/B duplicate, in-order frames, a partial overlap, a gap, a heartbeat, a bad-FCS frame followed by its good B copy, a foreign EtherType, another channel, a truncated frame and a full 46-message frame, with random idle cycles in the stream.
 
