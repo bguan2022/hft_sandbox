@@ -55,11 +55,18 @@ MSG_DELETE_ORDER = 0x03
 MSG_EXECUTE = 0x04
 MSG_TRADE = 0x05
 MSG_INSTRUMENT_STATUS = 0x06
+MSG_OPTION_QUOTE = 0x07       # top-of-book quote for one option series
+MSG_NEW_ORDER = 0x10          # order entry (EtherType 0x88B6)
 
 SIDE_BUY = ord("B")
 SIDE_SELL = ord("S")
+CALL = ord("C")
+PUT = ord("P")
 
 FLAG_END_OF_EVENT = 0x0000_0001
+FLAG_IOC = 0x0000_0002        # order flag: immediate-or-cancel
+
+ETHERTYPE_OE = 0x88B6         # order entry frames (IEEE 802 local experimental 2)
 
 MASK64 = (1 << 64) - 1
 
@@ -88,6 +95,33 @@ class Msg:
         return cls(*_MSG.unpack(b))
 
 
+def option_quote(instrument: int, put_call: int, bid: int, ask: int,
+                 bid_size: int, ask_size: int, ts_delta: int = 0, flags: int = 0) -> Msg:
+    """OPTION_QUOTE: same 32-byte layout, fields reinterpreted.
+
+    side = 'C'/'P', order_id = bid price, price = ask price (both 1e-9 units),
+    qty = {bid_size[15:0], ask_size[15:0]} in contracts.
+    instrument_id identifies one option series (underlying, expiry, strike,
+    call/put); the id-to-series mapping comes from a reference data source.
+    """
+    return Msg(type=MSG_OPTION_QUOTE, side=put_call, instrument=instrument, flags=flags,
+               order_id=bid & MASK64, price=ask, qty=((bid_size & 0xFFFF) << 16) | (ask_size & 0xFFFF),
+               ts_delta=ts_delta)
+
+
+def new_order(instrument: int, side: int, price: int, qty: int, cl_ord_id: int,
+              flags: int = FLAG_IOC) -> Msg:
+    """NEW_ORDER message: order_id = client order id, price = limit (1e-9), qty in contracts."""
+    return Msg(type=MSG_NEW_ORDER, side=side, instrument=instrument, flags=flags,
+               order_id=cl_ord_id, price=price, qty=qty, ts_delta=0)
+
+
+def build_order_frame(dst_mac: bytes, src_mac: bytes, session: int, seq: int,
+                      send_ts: int, order: Msg) -> bytes:
+    """Order entry frame: same header, EtherType 0x88B6, one 32-byte order (64 bytes)."""
+    return build_frame(dst_mac, src_mac, session, seq, send_ts, [order], ethertype=ETHERTYPE_OE)
+
+
 @dataclass(frozen=True)
 class Frame:
     channel: int
@@ -113,15 +147,17 @@ def build_frame(dst_mac: bytes, src_mac: bytes, channel: int, seq: int,
     return frame
 
 
-def parse_frame(frame: bytes) -> Optional[Frame]:
+def parse_frame(frame: bytes, ethertype: int = ETHERTYPE) -> Optional[Frame]:
     """Parse a frame. Returns None if it is not an LMD v1 frame.
+
+    Pass ethertype=ETHERTYPE_OE to parse order entry frames.
 
     Truncated frames are returned with only the complete messages present;
     callers decide validity by comparing len(msgs) with msg_count.
     """
     if len(frame) < HDR_LEN:
         return None
-    if struct.unpack_from(">H", frame, 12)[0] != ETHERTYPE:
+    if struct.unpack_from(">H", frame, 12)[0] != ethertype:
         return None
     version, count, channel, seq = _LMD_HDR.unpack_from(frame, ETH_HDR_LEN)
     if version != VERSION:

@@ -1,8 +1,9 @@
 # ============================================================================
-# build.tcl - synthesize and place & route lmd_rx_top for the VCU118
+# build.tcl - synthesize and place & route the LMD design for the VCU118
 #
 #   vivado -mode batch -nojournal -source vivado/build.tcl
 #   vivado -mode batch -nojournal -source vivado/build.tcl -tclargs synth
+#   vivado -mode batch -nojournal -source vivado/build.tcl -tclargs impl lmd_rx_top
 #
 # Target: AMD/Xilinx VCU118, Virtex UltraScale+ XCVU9P (xcvu9p-flga2104-2L-e).
 # Runs out-of-context (no I/O buffers), which is how the decoder is
@@ -11,8 +12,8 @@
 # ============================================================================
 
 set part   xcvu9p-flga2104-2L-e
-set top    lmd_rx_top
-set stage  [expr {$argc > 0 ? [lindex $argv 0] : "impl"}]   ;# synth | impl
+set stage  [expr {$argc > 0 ? [lindex $argv 0] : "impl"}]             ;# synth | impl
+set top    [expr {$argc > 1 ? [lindex $argv 1] : "lmd_trader_top"}]   ;# or lmd_rx_top
 
 set root    [file dirname [file dirname [file normalize [info script]]]]
 set out_dir [file join $root vivado out]

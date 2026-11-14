@@ -1,7 +1,7 @@
 __pycache__/
 sim/*.hex
-sim/params.vh
-sim/tb.vvp
+sim/*params.vh
+sim/*.vvp
 sim/*.vcd
 sim/xsim.dir/
 sim/*.jou

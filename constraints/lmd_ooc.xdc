@@ -1,5 +1,5 @@
 # ============================================================================
-# lmd_ooc.xdc - out-of-context timing constraints for lmd_rx_top on VCU118
+# lmd_ooc.xdc - out-of-context timing constraints for lmd_trader_top / lmd_rx_top on VCU118
 #               (Virtex UltraScale+ xcvu9p-flga2104-2L-e)
 #
 # 156.25 MHz = the 64-bit AXI4-Stream clock of a 10GBASE-R MAC.
